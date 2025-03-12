@@ -1,0 +1,225 @@
+Code Breakdown
+Imports
+python
+Copy
+Edit
+import xml.etree.ElementTree as ET
+import pandas as pd
+import re
+from pandas.io.json import json_normalize  # For older versions
+xml.etree.ElementTree → Parses XML files.
+pandas → Used for handling structured data.
+re → Used for regex operations (cleaning keys in XML).
+json_normalize → Converts nested JSON to a DataFrame (for older versions of Pandas).
+Function 1: clean_key(keys)
+python
+Copy
+Edit
+def clean_key(keys):
+    """Removes dynamic ID patterns from XML keys."""
+    is_match = True
+    while is_match:
+        try:
+            start_removal_index = keys.index('{')
+            end_removal_index = keys.index('}')
+            string_to_remove = keys[start_removal_index:end_removal_index+1]
+            keys = re.sub(re.escape(string_to_remove), "", keys)
+        except ValueError:
+            is_match = False 
+    return keys.strip("_")
+What it does:
+Some XML keys may contain dynamic IDs like {12345}. This function removes those IDs.
+Example:
+Input: "AuditTrailEntry_{12345}"
+Output: "AuditTrailEntry"
+How it works:
+Finds {} brackets using .index()
+Uses regex re.sub() to remove content inside {}.
+.strip("_") removes leading/trailing underscores.
+Function 2: parse_element(element, parent_key="", data_dict=None)
+python
+Copy
+Edit
+def parse_element(element, parent_key="", data_dict=None):
+    """Recursively parses an XML element into a structured dictionary."""
+    if data_dict is None:
+        data_dict = {}
+
+    audit_trail_entries = []  # List to store AuditTrail entries
+What it does:
+Parses XML recursively and converts it into a dictionary.
+Handles AuditTrailEntry separately by storing it in a list.
+Creates nested dictionaries for child elements.
+Processing Child Elements
+python
+Copy
+Edit
+    for child in element:
+        child_key = clean_key(child.tag)
+        key = f"{parent_key}_{child_key}" if parent_key else child_key
+
+        if child_key == "AuditTrailEntry":
+            audit_trail_entry = {}  # Create a new audit trail dictionary
+
+            # Parse each field inside AuditTrailEntry
+            for subchild in child:
+                subchild_key = clean_key(subchild.tag)
+                subchild_text = subchild.text.strip() if subchild.text else None
+
+                # Replace \r and \n with spaces
+                if subchild_text is not None:
+                    subchild_text = subchild_text.replace("\r", " ").replace("\n", " ")
+
+                # Store raw XML in "notes" field if it exists
+                if subchild_key == "Notes":
+                    audit_trail_entry["notes"] = subchild_text
+                else:
+                    audit_trail_entry[subchild_key] = subchild_text
+
+            # Ensure missing fields are set to None
+            audit_trail_entry.setdefault("notes", None)
+
+            audit_trail_entries.append(audit_trail_entry)
+What it does:
+Handles AuditTrailEntry specially by storing it in a separate list (audit_trail_entries).
+Processes each sub-element inside AuditTrailEntry:
+Cleans the key using clean_key()
+Strips extra spaces
+Removes \r and \n (newlines)
+Stores "Notes" separately as notes.
+Ensures "notes" field is set to None if missing.
+Handling Nested Elements
+python
+Copy
+Edit
+        elif len(list(child)) > 0:  # If element has child elements
+            nested_dict = {}
+            parse_element(child, key, nested_dict)
+            data_dict.update(nested_dict)
+What it does:
+Recursively calls parse_element() for child elements.
+Stores nested data properly.
+Handling Simple Key-Value Pairs
+python
+Copy
+Edit
+        else:
+            text_value = child.text.strip() if child.text else None
+
+            # Replace \r and \n with spaces
+            if text_value is not None:
+                text_value = text_value.replace("\r", " ").replace("\n", " ")
+
+            data_dict[child_key] = text_value
+What it does:
+If an element doesn't have children, it's stored as a key-value pair.
+Example:
+xml
+Copy
+Edit
+<State>active</State>
+→ Gets stored as:
+python
+Copy
+Edit
+{"State": "active"}
+Final Step: Attach AuditTrail
+python
+Copy
+Edit
+    if audit_trail_entries:
+        data_dict["AuditTrail"] = audit_trail_entries
+
+    return data_dict
+If AuditTrailEntry exists, it adds it to the dictionary.
+Returns the final structured dictionary.
+Function 3: xml_to_json(xml_file_path)
+python
+Copy
+Edit
+def xml_to_json(xml_file_path):
+    """Parses the XML file and converts it into a structured list of dictionaries."""
+    tree = ET.parse(xml_file_path)
+    root = tree.getroot()
+
+    data = [parse_element(record) for record in root]
+    return data
+What it does:
+Reads XML file using ET.parse().
+Loops through each record and converts it to JSON format using parse_element().
+Returns a list of dictionaries.
+Function 4: convert_to_dataframe(data)
+python
+Copy
+Edit
+def convert_to_dataframe(data):
+    """Converts structured JSON into a Pandas DataFrame."""
+    df = pd.json_normalize(data, record_path=['AuditTrail'], meta=['pmt_id', 'state'])
+    return df
+What it does:
+Converts JSON into a Pandas DataFrame.
+Flattens AuditTrail into rows.
+Meta fields (pmt_id, state) are kept in each row.
+Final Execution
+python
+Copy
+Edit
+xml_file = "input.xml"  # Replace with your XML file path
+data = xml_to_json(xml_file)
+
+df = convert_to_dataframe(data)
+print(df)
+What it does:
+Parses the XML file into a structured dictionary (data).
+Converts JSON into a DataFrame.
+Prints the DataFrame.
+Expected Output Structure
+If your XML looks like this:
+
+xml
+Copy
+Edit
+<Records>
+    <Record>
+        <pmt_id>1001</pmt_id>
+        <state>active</state>
+        <AuditTrailEntry>
+            <timestamp>2025-03-10T10:00:00Z</timestamp>
+            <Type>Update</Type>
+            <User>John</User>
+            <Notes>Some XML content</Notes>
+        </AuditTrailEntry>
+    </Record>
+</Records>
+The JSON output will be:
+
+python
+Copy
+Edit
+[
+    {
+        "pmt_id": "1001",
+        "state": "active",
+        "AuditTrail": [
+            {
+                "timestamp": "2025-03-10T10:00:00Z",
+                "Type": "Update",
+                "User": "John",
+                "notes": "Some XML content"
+            }
+        ]
+    }
+]
+The DataFrame output will be:
+
+pgsql
+Copy
+Edit
+         timestamp    Type   User          notes  pmt_id  state
+0  2025-03-10T10  Update  John  Some XML content   1001  active
+Key Features of This Code
+✔ Cleans XML keys (removes dynamic IDs).
+✔ Handles nested elements recursively.
+✔ Processes AuditTrailEntry separately.
+✔ Removes \r\n characters from text.
+✔ Flattens JSON into a DataFrame using json_normalize().
